@@ -57,6 +57,8 @@ enum AuthMethod {
 #[derive(Deserialize, Debug)]
 #[serde(rename = "receiver")]
 struct ReceiverConfig<'a> {
+    #[serde(borrow)]
+    addr: Cow<'a, str>,
     port: u16,
     auth: AuthMethod,
     #[serde(borrow)]
@@ -138,7 +140,7 @@ async fn transmit_loop<'a>(cfg: TransmitConfig<'a>) -> Result<(), Error> {
 }
 
 async fn receiver_loop<'a>(cfg: ReceiverConfig<'a>) -> Result<(), Error> {
-    let try_socket = TcpListener::bind(format!("127.0.0.1:{}", cfg.port)).await;
+    let try_socket = TcpListener::bind(format!("{}:{}", cfg.addr, cfg.port)).await;
 
     let listener = try_socket.unwrap_or_else(|_| {
         error!("socket was in use or unbindable");
