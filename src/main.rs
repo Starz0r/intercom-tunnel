@@ -107,7 +107,6 @@ async fn transmit_loop<'a>(cfg: TransmitConfig<'a>) -> Result<(), Error> {
     tokio::task::spawn(async move {
         use futures_util::sink::SinkExt;
         'f: loop {
-            info!("transmitting message");
             match c.recv().await.unwrap() {
                 Some(data) => conn.send(data).await.unwrap(),
                 None => break 'f,
@@ -172,6 +171,7 @@ async fn receiver_loop<'a>(cfg: ReceiverConfig<'a>) -> Result<(), Error> {
         let read_msgs = conn.try_for_each(|msg| match msg {
             Message::Binary(bin) => {
                 f.write_all(&bin).unwrap();
+                f.flush().unwrap();
                 futures_util::future::ready(Ok(()))
             }
             _ => futures_util::future::ready(Ok(())),
@@ -179,7 +179,7 @@ async fn receiver_loop<'a>(cfg: ReceiverConfig<'a>) -> Result<(), Error> {
 
         tokio::select! {
                 _ = read_msgs => {},
-                _ = tokio::signal::ctrl_c() => {f.flush(); return Ok(())}
+                _ = tokio::signal::ctrl_c() => {return Ok(())}
         };
     }
 
