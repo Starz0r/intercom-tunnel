@@ -1,6 +1,4 @@
-use std::{
-    borrow::Cow, io::Write, net::IpAddr,
-};
+use std::{borrow::Cow, io::Write, net::IpAddr};
 
 use {
     anyhow::{Error, Result},
@@ -175,7 +173,13 @@ async fn receiver_loop<'a>(cfg: ReceiverConfig<'a>) -> Result<(), Error> {
 
                 let writer = cmd.take_stdin().unwrap();
 
-                Left((cmd, writer))
+                tokio::task::spawn_blocking(move || {
+                    cmd.iter().unwrap().for_each(|ev| {
+                        info!("{ev:?}");
+                    });
+                });
+
+                Left(writer)
             }
             None => Right({
                 let mut open_opts = std::fs::OpenOptions::new();
@@ -192,7 +196,7 @@ async fn receiver_loop<'a>(cfg: ReceiverConfig<'a>) -> Result<(), Error> {
         let read_msgs = conn.try_for_each(move |ref msg| match msg {
             Message::Binary(bin) => {
                 match reencoder {
-                    Left((_, ref mut proc_in)) => {
+                    Left(ref mut proc_in) => {
                         proc_in.write_all(bin).unwrap();
                         proc_in.flush().unwrap();
                     }
