@@ -1,26 +1,16 @@
 use std::{
     borrow::Cow, io::Write, net::IpAddr, ops::ControlFlow, os::windows::prelude::AsRawHandle,
-    time::Duration,
 };
-
-use cpal::traits::{HostTrait, StreamTrait};
-use tokio::{
-    fs::{self, OpenOptions},
-    io::BufWriter,
-    net::{TcpListener, TcpStream},
-    process,
-    sync::mpsc::{Receiver, Sender},
-    task::yield_now,
-};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use {
-    anyhow::{anyhow, bail, Error, Result},
+    anyhow::{Error, Result},
     clap::{Parser, ValueEnum},
+    cpal::traits::{HostTrait, StreamTrait},
     either::{Left, Right},
     ffmpeg_sidecar::command::{ffmpeg_is_installed, FfmpegCommand},
     serde_derive::Deserialize,
-    tracing::{debug, error, info},
+    tokio::net::TcpListener,
+    tracing::{error, info},
     tracing_subscriber::FmtSubscriber,
     tungstenite::protocol::Message,
 };
@@ -167,30 +157,6 @@ async fn receiver_loop<'a>(cfg: ReceiverConfig<'a>) -> Result<(), Error> {
         // if we're reencoding, optionally spawn ffmpeg
         let mut reencoder = match cfg.reencode {
             Some(ref codec) => {
-                /*let mut cmd = std::process::Command::new("ffmpeg");
-                cmd.args([
-                    "-ac",
-                    "2",
-                    "-ar",
-                    "48000",
-                    "-f",
-                    "f32le",
-                    "-i",
-                    "pipe:0",
-                    "-f",
-                    codec,
-                    &cfg.devfile,
-                ]);
-                cmd.stdin(std::process::Stdio::piped());
-
-                let mut proc = cmd.spawn().unwrap_or_else(|e| {
-                    error!("reencoder process failed to spawn, {e:?}");
-                    panic!();
-                });*/
-
-                //Some(BufWriter::new(proc.stdin.take().unwrap()))
-                //Some(proc.stdin.take().unwrap())
-
                 if !ffmpeg_is_installed() {
                     error!("ffmpeg not detected, aborting...");
                     panic!();
