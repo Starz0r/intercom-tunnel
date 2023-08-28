@@ -164,7 +164,9 @@ async fn receiver_loop<'a>(cfg: ReceiverConfig<'a>) -> Result<(), Error> {
                 let mut cmd = FfmpegCommand::new()
                     .args(["-ac", "2", "-ar", "48000", "-f", "f32le"])
                     .input("pipe:0")
-                    .args(["-f", codec, &cfg.devfile])
+                    .args(["-f", codec])
+                    .overwrite()
+                    .args([&*cfg.devfile])
                     .spawn()
                     .unwrap_or_else(move |e| {
                         error!("ffmpeg sidecar failed to run: {e}");
