@@ -1,13 +1,15 @@
 use std::{
-    borrow::Cow,
-    fs::{self, OpenOptions},
-    io::Write,
-    net::IpAddr,
+    borrow::Cow, io::Write, net::IpAddr, ops::ControlFlow, os::windows::prelude::AsRawHandle,
+    time::Duration,
 };
 
 use cpal::traits::{HostTrait, StreamTrait};
 use tokio::{
+    fs::{self, OpenOptions},
+    io::BufWriter,
     net::{TcpListener, TcpStream},
+    process,
+    sync::mpsc::{Receiver, Sender},
     task::yield_now,
 };
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
@@ -15,6 +17,8 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use {
     anyhow::{anyhow, bail, Error, Result},
     clap::{Parser, ValueEnum},
+    either::{Left, Right},
+    ffmpeg_sidecar::command::{ffmpeg_is_installed, FfmpegCommand},
     serde_derive::Deserialize,
     tracing::{debug, error, info},
     tracing_subscriber::FmtSubscriber,
@@ -64,6 +68,8 @@ struct ReceiverConfig<'a> {
     #[serde(borrow)]
     devfile: Cow<'a, str>,
     transport: Option<Transport>,
+    #[serde(borrow)]
+    reencode: Option<Cow<'a, str>>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -155,23 +161,78 @@ async fn receiver_loop<'a>(cfg: ReceiverConfig<'a>) -> Result<(), Error> {
                 panic!();
             });
 
-        let mut f = {
-            if !std::path::Path::new(&*cfg.devfile).exists() {
-                std::fs::OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .append(true)
-                    .open(&*cfg.devfile)?
-            } else {
-                std::fs::File::create(&*cfg.devfile)?
+        // if we're reencoding, optionally spawn ffmpeg
+        let mut reencoder = match cfg.reencode {
+            Some(ref codec) => {
+                /*let mut cmd = std::process::Command::new("ffmpeg");
+                cmd.args([
+                    "-ac",
+                    "2",
+                    "-ar",
+                    "48000",
+                    "-f",
+                    "f32le",
+                    "-i",
+                    "pipe:0",
+                    "-f",
+                    codec,
+                    &cfg.devfile,
+                ]);
+                cmd.stdin(std::process::Stdio::piped());
+
+                let mut proc = cmd.spawn().unwrap_or_else(|e| {
+                    error!("reencoder process failed to spawn, {e:?}");
+                    panic!();
+                });*/
+
+                //Some(BufWriter::new(proc.stdin.take().unwrap()))
+                //Some(proc.stdin.take().unwrap())
+
+                if !ffmpeg_is_installed() {
+                    error!("ffmpeg not detected, aborting...");
+                    panic!();
+                }
+                info!("ffmpeg detected!");
+
+                let mut cmd = FfmpegCommand::new()
+                    .args(["-ac", "2", "-ar", "48000", "-f", "f32le"])
+                    .input("pipe:0")
+                    .args(["-f", codec, &cfg.devfile])
+                    .spawn()
+                    .unwrap_or_else(move |e| {
+                        error!("ffmpeg sidecar failed to run: {e}");
+                        panic!();
+                    });
+
+                let writer = cmd.take_stdin().unwrap();
+
+                Left((cmd, writer))
             }
+            None => Right({
+                let mut open_opts = std::fs::OpenOptions::new();
+                open_opts.write(true).append(true);
+                if !std::path::Path::new(&*cfg.devfile).exists() {
+                    open_opts.create_new(true).open(&*cfg.devfile)?
+                } else {
+                    open_opts.create_new(false).open(&*cfg.devfile)?
+                }
+            }),
         };
 
         use futures_util::stream::TryStreamExt;
-        let read_msgs = conn.try_for_each(|msg| match msg {
+        use tokio::io::AsyncWriteExt;
+        let read_msgs = conn.try_for_each(move |ref msg| match msg {
             Message::Binary(bin) => {
-                f.write_all(&bin).unwrap();
-                f.flush().unwrap();
+                match reencoder {
+                    Left((_, ref mut proc_in)) => {
+                        proc_in.write_all(bin).unwrap();
+                        proc_in.flush().unwrap();
+                    }
+                    Right(ref mut f) => {
+                        f.write_all(&bin).unwrap();
+                        f.sync_data().unwrap();
+                    }
+                };
                 futures_util::future::ready(Ok(()))
             }
             _ => futures_util::future::ready(Ok(())),
@@ -200,7 +261,7 @@ pub fn main() -> Result<(), Error> {
     });
     cfg_dir.push("intercom-tunnel.toml");
 
-    let cfg_data = &fs::read(cfg_dir)?;
+    let cfg_data = &std::fs::read(cfg_dir)?;
     let cfg: Config = toml::from_slice(cfg_data).unwrap();
 
     match argv.mode {
