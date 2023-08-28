@@ -1,5 +1,5 @@
 use std::{
-    borrow::Cow, io::Write, net::IpAddr, ops::ControlFlow, os::windows::prelude::AsRawHandle,
+    borrow::Cow, io::Write, net::IpAddr,
 };
 
 use {
@@ -189,7 +189,6 @@ async fn receiver_loop<'a>(cfg: ReceiverConfig<'a>) -> Result<(), Error> {
         };
 
         use futures_util::stream::TryStreamExt;
-        use tokio::io::AsyncWriteExt;
         let read_msgs = conn.try_for_each(move |ref msg| match msg {
             Message::Binary(bin) => {
                 match reencoder {
