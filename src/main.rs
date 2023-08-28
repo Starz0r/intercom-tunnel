@@ -110,11 +110,14 @@ async fn transmit_loop<'a>(cfg: TransmitConfig<'a>) -> Result<(), Error> {
 
     let (p, mut c) = tokio::sync::mpsc::channel(1024);
 
-    tokio::task::spawn(async move {
+    let sender_task = tokio::task::spawn(async move {
         use futures_util::sink::SinkExt;
         'f: loop {
             match c.recv().await.unwrap() {
-                Some(data) => conn.send(data).await.unwrap(),
+                Some(data) => conn.send(data).await.unwrap_or_else(|e| {
+                    error!("connection was interrupted: {e}");
+                    panic!()
+                }),
                 None => break 'f,
             }
         }
@@ -136,12 +139,12 @@ async fn transmit_loop<'a>(cfg: TransmitConfig<'a>) -> Result<(), Error> {
 
     dev_stream.play()?;
 
-    tokio::signal::ctrl_c().await.unwrap_or_else(|_| {
-        error!("failed to hook into the interrupt signal");
-        panic!();
-    });
-
-    Ok(())
+    loop {
+        tokio::select! {
+            _ = sender_task => {return Ok(())}
+            _ = tokio::signal::ctrl_c()=> {return Ok(())}
+        }
+    }
 }
 
 async fn receiver_loop<'a>(cfg: ReceiverConfig<'a>) -> Result<(), Error> {
